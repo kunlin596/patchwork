@@ -13,8 +13,7 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <pcl_ros/point_cloud.h>
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 
 #include "label_generator/nanoflann.hpp"
 #include "label_generator/nanoflann_utils.hpp"
@@ -47,7 +46,7 @@ void save_ground_label(const std::string abs_dir,
                        uint32_t GROUND_LABEL = 1) {
   // Save the estimate ground points into a `.label` file
   // It is relevant to 3DUIS benchmark and Stachniss lab's format
-  // https://codalab.lisn.upsaclay.fr/competitions/2183?secret_key=4763e3d2-1f22-45e6-803a-a862528426d2
+  // https://codalab.lisn.upsaclay.fr/competitions/2183?secret_key=4763e3d2-1f22-45e6-803a-a862528426d2
   const float SQR_EPSILON = 0.00001;
 
   int num_cloud_raw = cloud_raw.points.size();

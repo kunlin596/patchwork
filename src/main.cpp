@@ -10,9 +10,9 @@
 #define EST_GROUND 14  // For adk20k_mit
 #define EST_NONGROUND 0
 
+#include "label_generator/label_generator.hpp"
 #include "patchwork/patchwork.hpp"  // Your implementation
 #include "tools/kitti_loader.hpp"
-#include "tools/pcd_loader.hpp"
 
 using std::placeholders::_1;
 using PointType = pcl::PointXYZL;
@@ -113,9 +113,13 @@ int main(int argc, char **argv) {
   bool evaluate_semantickitti = node->declare_parameter<bool>("evaluate_semantickitti", false);
   bool save_flag = node->declare_parameter<bool>("save_flag", false);
   bool use_sor_before_save = node->declare_parameter<bool>("use_sor_before_save", false);
-  std::string dataset_path =
-      node->declare_parameter<std::string>("dataset_path", "/path/to/SemKITTI");
-  std::string seq = fs::path(dataset_path).filename().string();
+  const auto &kitti_sequence_dirpath =
+      fs::path(node->declare_parameter<std::string>("dataset_path", "/path/to/SemKITTI"));
+  std::string seq = kitti_sequence_dirpath.filename().string();
+
+  // The KITTI root directory, the parent path of `dataset/sequences/00`.
+  fs::path kitti_sequence_root_dirpath =
+      fs::path(kitti_sequence_dirpath).parent_path().parent_path().parent_path();
 
   if (evaluate_semantickitti) {
     rclcpp::Publisher<RosPointCloud2>::SharedPtr tp_pub;
@@ -129,15 +133,34 @@ int main(int argc, char **argv) {
     auto patchwork_eval = std::make_shared<PatchWork<PointEvalType>>(node.get());
 
     // Setting data loader and paths to be saved
-    KittiLoader loader(dataset_path);
+    KittiLoader loader(kitti_sequence_dirpath.string());
     const char *home_dir = std::getenv("HOME");
     if (home_dir == nullptr) {
       std::cerr << "Error: HOME environment variable not set." << std::endl;
       return 1;
     }
-    std::string abs_save_dir = std::string(home_dir) + "/patchwork";
-    fs::create_directory(abs_save_dir);
-    std::string output_filename = abs_save_dir + "/" + seq + ".txt";
+
+    // Create a folder structure like next to the KITTI dataset:
+    // ./
+    // └── Datasets/
+    //     └── SemanticKITTI
+    //         ├── assets
+    //             ├── patchwork
+    //                 ├── 00
+    //                     ├── 000000.label
+    //                     ├── 000001.label
+    //                     └── ...
+    //                 ├── 01
+    //                 └── ...
+    //         ├── dataset
+    //             ├── sequences
+    //                 ├── 00
+    //                 ├── 01
+    //                 └── ...
+    std::string output_dirpath = (kitti_sequence_root_dirpath / "assets/patchwork" / seq).string();
+    fs::create_directories(output_dirpath);
+    RCLCPP_INFO(node->get_logger(), "Output directory: %s", output_dirpath.c_str());
+    std::string output_filename = output_dirpath + "/" + seq + ".txt";
 
     const int N = loader.size();
     for (int n = 0; rclcpp::ok() && n < N; ++n) {
@@ -152,8 +175,6 @@ int main(int argc, char **argv) {
       calculate_precision_recall(cloud, ground, precision, recall);
       calculate_precision_recall(cloud, ground, precision_naive, recall_naive, false);
 
-      RCLCPP_INFO(node->get_logger(), "[%d] Precision: %.2f | Recall: %.2f", n, precision, recall);
-
       ofstream ground_output(output_filename, ios::app);
       ground_output << n << "," << time_taken << "," << precision << "," << recall << ","
                     << precision_naive << "," << recall_naive;
@@ -167,16 +188,16 @@ int main(int argc, char **argv) {
       discern_ground(ground, TP, FP);
       discern_ground(non_ground, FN, TN);
 
-      // if (save_flag) {  // To make `.label` file
-      //   if (use_sor_before_save) {
-      //     pcl::PointCloud<PointType>::Ptr filtered;
-      //     filtered.reset(new pcl::PointCloud<PointType>());
-      //     filter_by_sor(ground, *filtered);
-      //     save_ground_label(abs_save_dir, n, cloud, *filtered);
-      //   } else {
-      //     save_ground_label(abs_save_dir, n, cloud, ground);
-      //   }
-      // }
+      if (save_flag) {  // To make `.label` file
+        if (use_sor_before_save) {
+          pcl::PointCloud<PointEvalType>::Ptr filtered;
+          filtered.reset(new pcl::PointCloud<PointEvalType>());
+          filter_by_sor(ground, *filtered);
+          save_ground_label(output_dirpath, n, cloud, *filtered);
+        } else {
+          save_ground_label(output_dirpath, n, cloud, ground);
+        }
+      }
 
       const auto curr_time = rclcpp::Clock().now();
       sensor_msgs::msg::PointCloud2 ros_msg;
